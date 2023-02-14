@@ -9,6 +9,8 @@ from time import sleep
 from typing import Optional
 from playwright.sync_api import sync_playwright
 from playwright._impl._api_structures import ProxySettings
+import tqdm
+from datetime import datetime
 
 
 class ChatGPT:
@@ -236,3 +238,52 @@ class ChatGPT:
     def new_conversation(self):
         self.parent_message_id = str(uuid.uuid4())
         self.conversation_id = None
+
+    def consistent_ask(self, message : str, wait_time = 60, ini_wait_time = 1, nretry = 2) -> str: #time in (minutes)
+        """
+        Send a message to chatGPT and return the response using the ask() function but managing unusuable responses by retrying and waiting for the 1h limit.
+
+        Args:
+            message (str): The message to send.
+            wait_time (int): Time you want it to wait between trials. Usually 60min to wait for the "too many requests in 1h" to pass
+            init_wait_time (int): Sometimes chatgpt will return an unvalid response because peak time or the fact that its flaky. Before waiting longer retry after a short time.
+            nretry (int): Number of times to try, takes into account the initial re-try. So nretry=2 will result in waiting 1min, retry, then 1h and retry again.
+        
+        Returns:
+            str: The response received from OpenAI.
+        """
+        chatgpt_error = False
+        cnt_retry = 0 #to count n of retry attempts
+        
+        #use try in case the error comes from the browser used and not from chatgpt
+        try:
+            response = self.ask(message) #use try in case the error comes from the browser and not from the webpage itself
+        except:
+            chatgpt_error = True
+        
+        while(("Unusable response produced, maybe login session expired." in response) or (chatgpt_error==True)):
+            if cnt_retry == 0:
+                print(f"{datetime.today().strftime('[%H:%M:%S]')} Unusable response produced, waiting {ini_wait_time}min and retrying...")
+                time.sleep(60*ini_wait_time)
+                self.refresh_session()
+            
+            elif cnt_retry > 0  and cnt_retry < nretry:
+                print(f"{datetime.today().strftime('[%H:%M:%S]')} Unusable response produced, waiting {wait_time}min and retrying...")
+                for sleep_t in tqdm.tqdm(range(1,wait_time+1,1)): #use tqdm to show a nice progress bar of wait time
+                    time.sleep(60) #1min
+                    self.refresh_session()
+                    #Sometimes when waiting for 1h the program hangs. Refresh page every min.
+                   
+            else:
+                print(f"{datetime.today().strftime('[%H:%M:%S]')} Unusable response produced, maybe login session expired. Try 'pkill firefox' and 'chatgpt install'")
+                return "Unusable response produced, maybe login session expired. Try 'pkill firefox' and 'chatgpt install'"
+            
+            try: 
+                response = self.ask(message)
+                chatgpt_error = False
+            except:
+                chatgpt_error = True
+            
+            cnt_retry += 1 #count +1 retry
+        
+        return response
